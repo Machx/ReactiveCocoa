@@ -7,44 +7,75 @@
 //
 
 #import "NSObject+RACPropertySubscribing.h"
-#import <objc/runtime.h>
 #import "NSObject+RACKVOWrapper.h"
-#import "RACReplaySubject.h"
 #import "RACDisposable.h"
+#import "RACReplaySubject.h"
+#import "RACSignal+Operations.h"
+#import "EXTScope.h"
+#import "RACKVOTrampoline.h"
+#import "RACCompoundDisposable.h"
+#import <objc/runtime.h>
 
-static const void *RACObjectDisposables = &RACObjectDisposables;
+static const void *RACObjectCompoundDisposable = &RACObjectCompoundDisposable;
+static const void *RACObjectScopedDisposable = &RACObjectScopedDisposable;
 
 @implementation NSObject (RACPropertySubscribing)
 
-+ (RACSignal *)rac_signalFor:(NSObject *)object keyPath:(NSString *)keyPath onObject:(NSObject *)onObject {
-	RACReplaySubject *subject = [RACReplaySubject replaySubjectWithCapacity:1];
-	[onObject rac_addDeallocDisposable:[RACDisposable disposableWithBlock:^{
-		[subject sendCompleted];
-	}]];
-	
-	__unsafe_unretained NSObject *weakObject = object;
-	[object rac_addObserver:onObject forKeyPath:keyPath options:0 queue:[NSOperationQueue mainQueue] block:^(id target, NSDictionary *change) {
-		NSObject *strongObject = weakObject;
-		[subject sendNext:[strongObject valueForKeyPath:keyPath]];
-	}];
-	
-	return subject;
++ (RACSignal *)rac_signalFor:(NSObject *)object keyPath:(NSString *)keyPath observer:(NSObject *)observer {
+	@unsafeify(observer, object);
+	return [[RACSignal createSignal:^(id<RACSubscriber> subscriber) {
+		@strongify(observer, object);
+		RACKVOTrampoline *KVOTrampoline = [object rac_addObserver:observer forKeyPath:keyPath options:0 block:^(id target, id observer, NSDictionary *change) {
+			[subscriber sendNext:[target valueForKeyPath:keyPath]];
+		}];
+
+		RACDisposable *KVODisposable = [RACDisposable disposableWithBlock:^{
+			[KVOTrampoline stopObserving];
+		}];
+
+		@weakify(subscriber);
+		RACDisposable *deallocDisposable = [RACDisposable disposableWithBlock:^{
+			@strongify(subscriber);
+			[KVODisposable dispose];
+			[subscriber sendCompleted];
+		}];
+
+		[observer rac_addDeallocDisposable:deallocDisposable];
+		[object rac_addDeallocDisposable:deallocDisposable];
+
+		RACCompoundDisposable *observerDisposable = observer.rac_deallocDisposable;
+		RACCompoundDisposable *objectDisposable = object.rac_deallocDisposable;
+		return [RACDisposable disposableWithBlock:^{
+			[observerDisposable removeDisposable:deallocDisposable];
+			[objectDisposable removeDisposable:deallocDisposable];
+			[KVODisposable dispose];
+		}];
+	}] setNameWithFormat:@"RACAble(%@, %@)", object, keyPath];
 }
 
-- (RACSignal *)rac_signalForKeyPath:(NSString *)keyPath onObject:(NSObject *)object {
-	return [self.class rac_signalFor:self keyPath:keyPath onObject:object];
+- (RACSignal *)rac_signalForKeyPath:(NSString *)keyPath observer:(NSObject *)observer {
+	return [self.class rac_signalFor:self keyPath:keyPath observer:observer];
 }
 
 - (RACDisposable *)rac_deriveProperty:(NSString *)keyPath from:(RACSignal *)signal {
 	return [signal toProperty:keyPath onObject:self];
 }
 
-- (void)rac_addDeallocDisposable:(RACDisposable *)disposable {
+- (RACCompoundDisposable *)rac_deallocDisposable {
 	@synchronized(self) {
-		NSSet *disposables = objc_getAssociatedObject(self, RACObjectDisposables) ?: [NSSet set];
-		disposables = [disposables setByAddingObject:[disposable asScopedDisposable]];
-		objc_setAssociatedObject(self, RACObjectDisposables, disposables, OBJC_ASSOCIATION_RETAIN);
+		RACCompoundDisposable *compoundDisposable = objc_getAssociatedObject(self, RACObjectCompoundDisposable);
+		if (compoundDisposable == nil) {
+			compoundDisposable = [RACCompoundDisposable compoundDisposable];
+			objc_setAssociatedObject(self, RACObjectCompoundDisposable, compoundDisposable, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+			objc_setAssociatedObject(self, RACObjectScopedDisposable, compoundDisposable.asScopedDisposable, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		}
+
+		return compoundDisposable;
 	}
+}
+
+- (void)rac_addDeallocDisposable:(RACDisposable *)disposable {
+	[self.rac_deallocDisposable addDisposable:disposable];
 }
 
 @end

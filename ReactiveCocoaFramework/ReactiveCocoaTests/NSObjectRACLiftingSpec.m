@@ -10,6 +10,8 @@
 #import "RACTestObject.h"
 #import "RACSubject.h"
 #import "RACUnit.h"
+#import "NSObject+RACPropertySubscribing.h"
+#import "RACDisposable.h"
 
 SpecBegin(NSObjectRACLiftingSpec)
 
@@ -103,6 +105,39 @@ describe(@"-rac_liftSelector:withObjects:", ^{
 		expect(strcmp(object.charPointerValue, string) == 0).to.beTruthy();
 	});
 
+	it(@"should work for CGRect", ^{
+		RACSubject *subject = [RACSubject subject];
+		[object rac_liftSelector:@selector(setRectValue:) withObjects:subject];
+
+		expect(object.rectValue).to.equal(CGRectZero);
+
+		CGRect value = CGRectMake(10, 20, 30, 40);
+		[subject sendNext:[NSValue valueWithRect:value]];
+		expect(object.rectValue).to.equal(value);
+	});
+
+	it(@"should work for CGSize", ^{
+		RACSubject *subject = [RACSubject subject];
+		[object rac_liftSelector:@selector(setSizeValue:) withObjects:subject];
+
+		expect(object.sizeValue).to.equal(CGSizeZero);
+
+		CGSize value = CGSizeMake(10, 20);
+		[subject sendNext:[NSValue valueWithSize:value]];
+		expect(object.sizeValue).to.equal(value);
+	});
+
+	it(@"should work for CGPoint", ^{
+		RACSubject *subject = [RACSubject subject];
+		[object rac_liftSelector:@selector(setPointValue:) withObjects:subject];
+
+		expect(object.pointValue).to.equal(CGPointZero);
+
+		CGPoint value = CGPointMake(10, 20);
+		[subject sendNext:[NSValue valueWithPoint:value]];
+		expect(object.pointValue).to.equal(value);
+	});
+
 	it(@"should send the latest value of the signal as the right argument", ^{
 		RACSubject *subject = [RACSubject subject];
 		[object rac_liftSelector:@selector(setObjectValue:andIntegerValue:) withObjects:@"object", subject];
@@ -160,6 +195,22 @@ describe(@"-rac_liftSelector:withObjects:", ^{
 
 			expect(result).to.equal(@"Magic number: 43");
 		});
+	});
+
+	it(@"shouldn't strongly capture the receiver", ^{
+		__block BOOL dealloced = NO;
+		@autoreleasepool {
+			RACTestObject *testObject __attribute__((objc_precise_lifetime)) = [[RACTestObject alloc] init];
+			[testObject rac_addDeallocDisposable:[RACDisposable disposableWithBlock:^{
+				dealloced = YES;
+			}]];
+
+			RACSubject *subject = [RACSubject subject];
+			[testObject rac_liftSelector:@selector(setObjectValue:) withObjects:subject];
+			[subject sendNext:@1];
+		}
+
+		expect(dealloced).to.beTruthy();
 	});
 });
 

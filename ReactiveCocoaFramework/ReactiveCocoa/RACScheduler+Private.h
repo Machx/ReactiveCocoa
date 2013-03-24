@@ -6,7 +6,7 @@
 //  Copyright (c) 2012 GitHub, Inc. All rights reserved.
 //
 
-#import "RACScheduler.h"
+#import <ReactiveCocoa/RACScheduler.h>
 
 // The queue-specific current scheduler key.
 extern const void *RACSchedulerCurrentSchedulerKey;
@@ -21,7 +21,7 @@ extern const void *RACSchedulerCurrentSchedulerKey;
 // 
 // To fulfill those two, if we already have a valid +currentScheduler, it
 // immediately executes scheduled blocks. If we don't, it will execute scheduled
-// blocks with +mainThreadScheduler.
+// blocks with a private background scheduler.
 + (instancetype)subscriptionScheduler;
 
 // Initializes the receiver with the given name.

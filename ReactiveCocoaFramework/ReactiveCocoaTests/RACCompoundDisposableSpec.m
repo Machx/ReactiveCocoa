@@ -52,4 +52,34 @@ it(@"should dispose of any added disposables immediately if it's already been di
 	expect(disposed).to.beTruthy();
 });
 
+it(@"should work when initialized with -init", ^{
+	RACCompoundDisposable *disposable = [[RACCompoundDisposable alloc] init];
+
+	__block BOOL disposed = NO;
+	RACDisposable *d = [RACDisposable disposableWithBlock:^{
+		disposed = YES;
+	}];
+
+	[disposable addDisposable:d];
+	expect(disposed).to.beFalsy();
+
+	[disposable dispose];
+	expect(disposed).to.beTruthy();
+});
+
+it(@"should allow disposables to be removed", ^{
+	RACCompoundDisposable *disposable = [[RACCompoundDisposable alloc] init];
+
+	__block BOOL disposed = NO;
+	RACDisposable *d = [RACDisposable disposableWithBlock:^{
+		disposed = YES;
+	}];
+
+	[disposable addDisposable:d];
+	[disposable removeDisposable:d];
+
+	[disposable dispose];
+	expect(disposed).to.beFalsy();
+});
+
 SpecEnd

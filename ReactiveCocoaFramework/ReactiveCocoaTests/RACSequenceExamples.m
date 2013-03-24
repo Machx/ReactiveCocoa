@@ -10,17 +10,22 @@
 
 #import "RACScheduler.h"
 #import "RACSequence.h"
-#import "RACSignalProtocol.h"
+#import "RACSignal+Operations.h"
 
 NSString * const RACSequenceExamples = @"RACSequenceExamples";
-NSString * const RACSequenceSequence = @"RACSequenceSequence";
-NSString * const RACSequenceExpectedValues = @"RACSequenceExpectedValues";
+NSString * const RACSequenceExampleSequence = @"RACSequenceExampleSequence";
+NSString * const RACSequenceExampleExpectedValues = @"RACSequenceExampleExpectedValues";
 
 SharedExampleGroupsBegin(RACSequenceExamples);
 
 sharedExamplesFor(RACSequenceExamples, ^(NSDictionary *data) {
-	RACSequence *sequence = data[RACSequenceSequence];
-	NSArray *values = [data[RACSequenceExpectedValues] copy];
+	__block RACSequence *sequence;
+	__block NSArray *values;
+	
+	beforeEach(^{
+		sequence = data[RACSequenceExampleSequence];
+		values = [data[RACSequenceExampleExpectedValues] copy];
+	});
 
 	it(@"should implement <NSFastEnumeration>", ^{
 		NSMutableArray *collectedValues = [NSMutableArray array];
@@ -35,14 +40,37 @@ sharedExamplesFor(RACSequenceExamples, ^(NSDictionary *data) {
 		expect(sequence.array).to.equal(values);
 	});
 
-	it(@"should return an immediately scheduled signal", ^{
-		id<RACSignal> signal = [sequence signalWithScheduler:RACScheduler.immediateScheduler];
-		expect(signal.toArray).to.equal(values);
-	});
+	describe(@"-signalWithScheduler:", ^{
+		it(@"should return an immediately scheduled signal", ^{
+			RACSignal *signal = [sequence signalWithScheduler:RACScheduler.immediateScheduler];
+			expect(signal.toArray).to.equal(values);
+		});
 
-	it(@"should return a background scheduled signal", ^{
-		id<RACSignal> signal = [sequence signalWithScheduler:RACScheduler.backgroundScheduler];
-		expect(signal.toArray).to.equal(values);
+		it(@"should return a background scheduled signal", ^{
+			RACSignal *signal = [sequence signalWithScheduler:[RACScheduler scheduler]];
+			expect(signal.toArray).to.equal(values);
+		});
+
+		it(@"should only evaluate one value per scheduling", ^{
+			RACSignal *signal = [sequence signalWithScheduler:RACScheduler.mainThreadScheduler];
+
+			__block BOOL flag = YES;
+			__block BOOL completed = NO;
+			[signal subscribeNext:^(id x) {
+				expect(flag).to.beTruthy();
+				flag = NO;
+
+				[RACScheduler.mainThreadScheduler schedule:^{
+					// This should get executed before the next value (which
+					// verifies that it's YES).
+					flag = YES;
+				}];
+			} completed:^{
+				completed = YES;
+			}];
+
+			expect(completed).will.beTruthy();
+		});
 	});
 
 	it(@"should be equal to itself", ^{
@@ -77,6 +105,20 @@ sharedExamplesFor(RACSequenceExamples, ^(NSDictionary *data) {
 
 		RACSequence *unarchived = [NSKeyedUnarchiver unarchiveObjectWithData:data];
 		expect(unarchived).to.equal(sequence);
+	});
+	
+	it(@"should fold right", ^{
+		RACSequence *result = [sequence foldRightWithStart:[RACSequence empty] combine:^(id first, RACSequence *rest) {
+			return [rest.head startWith:first];
+		}];
+		expect(result.array).to.equal(values);
+	});
+	
+	it(@"should fold left", ^{
+		RACSequence *result = [sequence foldLeftWithStart:[RACSequence empty] combine:^(RACSequence *first, id rest) {
+			return [first concat:[RACSequence return:rest]];
+		}];
+		expect(result.array).to.equal(values);
 	});
 });
 

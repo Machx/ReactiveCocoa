@@ -26,7 +26,7 @@
 
 #pragma mark Lifecycle
 
-+ (RACSequence *)sequenceWithArray:(NSArray *)array offset:(NSUInteger)offset {
++ (instancetype)sequenceWithArray:(NSArray *)array offset:(NSUInteger)offset {
 	NSParameterAssert(offset <= array.count);
 
 	if (offset == array.count) return self.empty;
@@ -44,7 +44,9 @@
 }
 
 - (RACSequence *)tail {
-	return [self.class sequenceWithArray:self.backingArray offset:self.offset + 1];
+	RACSequence *sequence = [self.class sequenceWithArray:self.backingArray offset:self.offset + 1];
+	sequence.name = self.name;
+	return sequence;
 }
 
 #pragma clang diagnostic push
@@ -74,7 +76,7 @@
 #pragma mark NSObject
 
 - (NSString *)description {
-	return [NSString stringWithFormat:@"<%@: %p>{ array = %@ }", self.class, self, self.backingArray];
+	return [NSString stringWithFormat:@"<%@: %p>{ name = %@, array = %@ }", self.class, self, self.name, self.backingArray];
 }
 
 @end

@@ -81,6 +81,13 @@
 	}];
 }
 
+- (void)dealloc {
+	// Prevents overflowing the stack when deallocating a long chain of dynamic
+	// sequences (which results in a lot of nested calls to -dealloc). This is
+	// obviously not ideal performance-wise, but is safer.
+	__autoreleasing RACSequence *tail __attribute__((unused)) = _tail;
+}
+
 #pragma mark RACSequence
 
 - (id)head {
@@ -98,11 +105,30 @@
 	@synchronized (self) {
 		if (self.tailBlock != nil) {
 			_tail = self.tailBlock();
+			if (_tail.name == nil) _tail.name = self.name;
+
 			self.tailBlock = nil;
 		}
 
 		return _tail;
 	}
+}
+
+#pragma mark NSObject
+
+- (NSString *)description {
+	id head = @"(unresolved)";
+	id tail = @"(unresolved)";
+
+	@synchronized (self) {
+		if (self.headBlock == nil) head = _head;
+		if (self.tailBlock == nil) {
+			tail = _tail;
+			if (tail == self) tail = @"(self)";
+		}
+	}
+
+	return [NSString stringWithFormat:@"<%@: %p>{ name = %@, head = %@, tail = %@ }", self.class, self, self.name, head, tail];
 }
 
 @end

@@ -7,9 +7,12 @@
 //
 
 #import "RACReplaySubject.h"
+#import "RACDisposable.h"
+#import "RACScheduler+Private.h"
 #import "RACSubscriber.h"
 #import "RACTuple.h"
-#import "RACDisposable.h"
+#import "RACCompoundDisposable.h"
+#import <libkern/OSAtomic.h>
 
 const NSUInteger RACReplaySubjectUnlimitedCapacity = 0;
 
@@ -51,22 +54,37 @@ const NSUInteger RACReplaySubjectUnlimitedCapacity = 0;
 #pragma mark RACSignal
 
 - (RACDisposable *)subscribe:(id<RACSubscriber>)subscriber {
-	@synchronized (self) {
-		RACDisposable *disposable = nil;
-		if (!self.hasCompleted && !self.hasError) disposable = [super subscribe:subscriber];
+	__block volatile uint32_t disposed = 0;
 
-		for (id value in self.valuesReceived) {
-			[subscriber sendNext:([value isKindOfClass:RACTupleNil.class] ? nil : value)];
+	RACDisposable *stopDisposable = [RACDisposable disposableWithBlock:^{
+		OSAtomicOr32Barrier(1, &disposed);
+	}];
+	
+	RACCompoundDisposable *compoundDisposable = [RACCompoundDisposable compoundDisposableWithDisposables:@[ stopDisposable ]];
+	RACDisposable *schedulingDisposable = [RACScheduler.subscriptionScheduler schedule:^{
+		@synchronized (self) {
+			for (id value in self.valuesReceived) {
+				if (disposed != 0) return;
+
+				[subscriber sendNext:([value isKindOfClass:RACTupleNil.class] ? nil : value)];
+			}
+
+			if (disposed != 0) return;
+
+			if (self.hasCompleted) {
+				[subscriber sendCompleted];
+			} else if (self.hasError) {
+				[subscriber sendError:self.error];
+			} else {
+				RACDisposable *subscriptionDisposable = [super subscribe:subscriber];
+				[compoundDisposable addDisposable:subscriptionDisposable];
+			}
 		}
+	}];
 
-		if (self.hasCompleted) {
-			[subscriber sendCompleted];
-		} else if (self.hasError) {
-			[subscriber sendError:self.error];
-		}
+	if (schedulingDisposable != nil) [compoundDisposable addDisposable:schedulingDisposable];
 
-		return disposable;
-	}
+	return compoundDisposable;
 }
 
 #pragma mark RACSubscriber

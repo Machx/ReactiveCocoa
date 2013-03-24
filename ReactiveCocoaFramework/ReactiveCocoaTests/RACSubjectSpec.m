@@ -9,21 +9,25 @@
 #import "RACSubscriberExamples.h"
 
 #import "EXTScope.h"
-#import "RACSubject.h"
 #import "RACBehaviorSubject.h"
+#import "RACDisposable.h"
 #import "RACReplaySubject.h"
+#import "RACScheduler.h"
+#import "RACSignal+Operations.h"
+#import "RACSubject.h"
+#import "RACUnit.h"
 
 SpecBegin(RACSubject)
 
 describe(@"RACSubject", ^{
 	__block RACSubject *subject;
-	__block NSMutableSet *values;
+	__block NSMutableArray *values;
 
 	__block BOOL success;
 	__block NSError *error;
 
 	beforeEach(^{
-		values = [NSMutableSet set];
+		values = [NSMutableArray array];
 
 		subject = [RACSubject subject];
 		success = YES;
@@ -39,11 +43,14 @@ describe(@"RACSubject", ^{
 		}];
 	});
 
-	itShouldBehaveLike(RACSubscriberExamples, [^{ return subject; } copy], [^(NSSet *expectedValues) {
-		expect(success).to.beTruthy();
-		expect(error).to.beNil();
-		expect(values).to.equal(expectedValues);
-	} copy], nil);
+	itShouldBehaveLike(RACSubscriberExamples, ^{
+		return @{
+			RACSubscriberExampleSubscriber: subject,
+			RACSubscriberExampleValuesReceivedBlock: [^{ return [values copy]; } copy],
+			RACSubscriberExampleErrorReceivedBlock: [^{ return error; } copy],
+			RACSubscriberExampleSuccessBlock: [^{ return success; } copy]
+		};
+	});
 });
 
 describe(@"RACReplaySubject", ^{
@@ -135,17 +142,40 @@ describe(@"RACReplaySubject", ^{
 			subject = [RACReplaySubject subject];
 		});
 
-		itShouldBehaveLike(RACSubscriberExamples, [^{ return subject; } copy], [^(NSSet *expectedValues) {
-			NSMutableSet *values = [NSMutableSet set];
+		itShouldBehaveLike(RACSubscriberExamples, ^{
+			return @{
+				RACSubscriberExampleSubscriber: subject,
+				RACSubscriberExampleValuesReceivedBlock: [^{
+					NSMutableArray *values = [NSMutableArray array];
 
-			// This subscription should synchronously dump all values already
-			// received into 'values'.
-			[subject subscribeNext:^(id value) {
-				[values addObject:value];
-			}];
+					// This subscription should synchronously dump all values already
+					// received into 'values'.
+					[subject subscribeNext:^(id value) {
+						[values addObject:value];
+					}];
 
-			expect(values).to.equal(expectedValues);
-		} copy], nil);
+					return values;
+				} copy],
+				RACSubscriberExampleErrorReceivedBlock: [^{
+					__block NSError *error = nil;
+
+					[subject subscribeError:^(NSError *x) {
+						error = x;
+					}];
+
+					return error;
+				} copy],
+				RACSubscriberExampleSuccessBlock: [^{
+					__block BOOL success = YES;
+
+					[subject subscribeError:^(NSError *x) {
+						success = NO;
+					}];
+
+					return success;
+				} copy]
+			};
+		});
 		
 		it(@"should send both values to new subscribers after completion", ^{
 			id firstValue = @"blah";
@@ -213,6 +243,90 @@ describe(@"RACReplaySubject", ^{
 			[replayedValues enumerateObjectsUsingBlock:^(id value, NSUInteger index, BOOL *stop) {
 				expect(liveValues[index]).to.equal(value);
 			}];
+		});
+
+		it(@"should have a current scheduler when replaying", ^{
+			[subject sendNext:RACUnit.defaultUnit];
+
+			__block RACScheduler *currentScheduler;
+			[subject subscribeNext:^(id x) {
+				currentScheduler = RACScheduler.currentScheduler;
+			}];
+
+			expect(currentScheduler).notTo.beNil();
+
+			currentScheduler = nil;
+			dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				[subject subscribeNext:^(id x) {
+					currentScheduler = RACScheduler.currentScheduler;
+				}];
+			});
+
+			expect(currentScheduler).willNot.beNil();
+		});
+		
+		it(@"should stop replaying when the subscription is disposed", ^{
+			NSMutableArray *values = [NSMutableArray array];
+
+			[subject sendNext:@0];
+			[subject sendNext:@1];
+
+			dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				__block RACDisposable *disposable = [subject subscribeNext:^(id x) {
+					expect(disposable).notTo.beNil();
+
+					[values addObject:x];
+					[disposable dispose];
+				}];
+			});
+
+			expect(values).will.equal(@[ @0 ]);
+		});
+
+		it(@"should finish replaying before completing", ^{
+			[subject sendNext:@1];
+
+			__block id received;
+			dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				[subject subscribeNext:^(id x) {
+					received = x;
+				}];
+
+				[subject sendCompleted];
+			});
+
+			expect(received).will.equal(@1);
+		});
+
+		it(@"should finish replaying before erroring", ^{
+			[subject sendNext:@1];
+
+			__block id received;
+			dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				[subject subscribeNext:^(id x) {
+					received = x;
+				}];
+
+				[subject sendError:[NSError errorWithDomain:@"blah" code:-99 userInfo:nil]];
+			});
+
+			expect(received).will.equal(@1);
+		});
+
+		it(@"should finish replaying before sending new values", ^{
+			[subject sendNext:@1];
+
+			NSMutableArray *received = [NSMutableArray array];
+			dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+				[subject subscribeNext:^(id x) {
+					[received addObject:x];
+				}];
+
+				[subject sendNext:@2];
+			});
+
+			NSArray *expected = @[ @1, @2 ];
+			expect(received).will.equal(expected);
 		});
 	});
 });
